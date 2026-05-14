@@ -1,0 +1,35 @@
+{
+  "drift_detected": false,
+  "features": {
+    "recency": {
+      "ks_statistic": 0.0,
+      "p_value": 1.0,
+      "drift_detected": false
+    },
+    "frequency": {
+      "ks_statistic": 0.0,
+      "p_value": 1.0,
+      "drift_detected": false
+    },
+    "monetary": {
+      "ks_statistic": 0.0,
+      "p_value": 1.0,
+      "drift_detected": false
+    },
+    "avg_order_value": {
+      "ks_statistic": 0.0,
+      "p_value": 1.0,
+      "drift_detected": false
+    },
+    "high_value": {
+      "ks_statistic": 0.0,
+      "p_value": 1.0,
+      "drift_detected": false
+    },
+    "recency_score": {
+      "ks_statistic": 0.0,
+      "p_value": 1.0,
+      "drift_detected": false
+    }
+  }
+}

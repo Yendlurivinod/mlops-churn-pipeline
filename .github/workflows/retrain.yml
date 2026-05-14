@@ -1,0 +1,55 @@
+name: Auto Retrain on Drift
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight
+
+jobs:
+  detect-and-retrain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ETL pipeline
+        run: python pipeline/etl.py
+
+      - name: Check for drift
+        id: drift_check
+        run: |
+          python pipeline/drift_detection.py
+          echo "drift_exit=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Retrain model if drift detected
+        if: steps.drift_check.outputs.drift_exit == '1'
+        run: |
+          echo "⚠ Drift detected — triggering retraining..."
+          python pipeline/train.py
+
+      - name: Skip retraining if no drift
+        if: steps.drift_check.outputs.drift_exit == '0'
+        run: echo "✓ No drift detected — model is stable, skipping retraining"
+
+      - name: Upload drift report
+        uses: actions/upload-artifact@v3
+        with:
+          name: drift-report
+          path: data/processed/drift_report.json
+
+      - name: Upload model metrics
+        uses: actions/upload-artifact@v3
+        if: steps.drift_check.outputs.drift_exit == '1'
+        with:
+          name: model-metrics
+          path: data/processed/latest_metrics.json
