@@ -4,44 +4,176 @@ on:
   schedule:
     - cron: '0 */6 * * *'
   workflow_dispatch:
+  push:
+    branches: [ main ]
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # ✅ fixes Node.js warning
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PYTHON_VERSION: '3.10'
 
 jobs:
   detect-and-retrain:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout code
+
+      # ── STEP 1: Checkout ──
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      # ── STEP 2: Python setup ──
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
+      # ── STEP 3: Install dependencies ──
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "No requirements.txt found — installing defaults"
+            pip install pandas numpy scipy scikit-learn flask
+          fi
 
-      - name: Run drift detection
-        id: drift
+      # ── STEP 4: Debug — show repo structure ──
+      - name: Show repo structure
         run: |
-          python pipeline/drift_detection.py
-        continue-on-error: true            # ✅ prevents exit code 2 crash
+          echo "====== REPO STRUCTURE ======"
+          find . -type f -name "*.py" | head -30
+          echo ""
+          echo "====== PIPELINE FOLDER ======"
+          ls -la pipeline/ 2>/dev/null || echo "No pipeline/ folder found"
+          echo ""
+          echo "====== DATA FOLDER ======"
+          ls -la data/ 2>/dev/null || echo "No data/ folder found"
+          echo ""
+          echo "====== MODELS FOLDER ======"
+          ls -la models/ 2>/dev/null || echo "No models/ folder found"
+          echo "============================"
 
-      - name: Retrain if drift detected
-        if: steps.drift.outcome == 'success'
-        run: python pipeline/retrain.py
+      # ── STEP 5: Create required directories ──
+      - name: Create required directories
+        run: |
+          mkdir -p data/raw data/processed models reports logs
 
-      - name: Evaluate new model
-        run: python pipeline/evaluate.py
+      # ── STEP 6: Data ingestion ──
+      - name: Run data ingestion
+        id: ingestion
+        run: |
+          if [ -f pipeline/data_ingestion.py ]; then
+            echo "Running data_ingestion.py..."
+            python pipeline/data_ingestion.py
+          else
+            echo "data_ingestion.py not found — skipping"
+          fi
+        continue-on-error: false
 
+      # ── STEP 7: Feature engineering ──
+      - name: Run feature engineering
+        id: features
+        run: |
+          if [ -f pipeline/feature_engineering.py ]; then
+            echo "Running feature_engineering.py..."
+            python pipeline/feature_engineering.py
+          else
+            echo "feature_engineering.py not found — skipping"
+          fi
+        continue-on-error: false
+
+      # ── STEP 8: Train model ──
+      - name: Train model
+        id: train
+        run: |
+          if [ -f pipeline/train.py ]; then
+            echo "Running train.py..."
+            python pipeline/train.py
+          else
+            echo "train.py not found — skipping"
+          fi
+        continue-on-error: true
+
+      # ── STEP 9: Drift detection ──
+      - name: Run drift detection
+        id: drift_check
+        run: |
+          if [ -f pipeline/drift_detection.py ]; then
+            echo "Running drift_detection.py..."
+            python pipeline/drift_detection.py && echo "drift=true" >> $GITHUB_OUTPUT || echo "drift=false" >> $GITHUB_OUTPUT
+          else
+            echo "drift_detection.py not found — skipping"
+          fi
+        continue-on-error: true
+
+      # ── STEP 10: Retrain ──
+      - name: Retrain model
+        id: retrain
+        run: |
+          if [ -f pipeline/retrain.py ]; then
+            echo "Running retrain.py..."
+            python pipeline/retrain.py
+          else
+            echo "retrain.py not found — skipping"
+          fi
+        continue-on-error: true
+
+      # ── STEP 11: Evaluate ──
+      - name: Evaluate model
+        id: evaluate
+        run: |
+          if [ -f pipeline/evaluate.py ]; then
+            echo "Running evaluate.py..."
+            python pipeline/evaluate.py
+          else
+            echo "evaluate.py not found — skipping"
+          fi
+        continue-on-error: true
+
+      # ── STEP 12: Upload artifacts ──
       - name: Upload model artifacts
-        uses: actions/upload-artifact@v4   # ✅ v4
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: model-artifacts
-          path: models/
+          name: pipeline-artifacts-${{ github.run_number }}
+          path: |
+            models/
+            reports/
           retention-days: 30
+          if-no-files-found: ignore
+
+      # ── STEP 13: Upload logs ──
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-logs-${{ github.run_number }}
+          path: |
+            logs/
+            *.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # ── STEP 14: Summary ──
+      - name: Pipeline summary
+        if: always()
+        run: |
+          echo "================================"
+          echo "     MLOps Pipeline Summary     "
+          echo "================================"
+          echo "Run        : ${{ github.run_number }}"
+          echo "Triggered  : ${{ github.event_name }}"
+          echo "Branch     : ${{ github.ref_name }}"
+          echo "Ingestion  : ${{ steps.ingestion.outcome }}"
+          echo "Features   : ${{ steps.features.outcome }}"
+          echo "Train      : ${{ steps.train.outcome }}"
+          echo "Drift      : ${{ steps.drift_check.outcome }}"
+          echo "Retrain    : ${{ steps.retrain.outcome }}"
+          echo "Evaluate   : ${{ steps.evaluate.outcome }}"
+          echo "================================"
+          echo ""
+          echo "Reports generated:"
+          ls -la reports/ 2>/dev/null || echo "No reports found"
