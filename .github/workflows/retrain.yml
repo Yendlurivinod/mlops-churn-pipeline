@@ -1,9 +1,9 @@
-name: Auto Retrain on Drift
+name: detect-and-retrain
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # Run daily at midnight
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:          # manual trigger
 
 jobs:
   detect-and-retrain:
@@ -11,45 +11,28 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4          # ✅ updated
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5      # ✅ updated
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run ETL pipeline
-        run: python pipeline/etl.py
-
-      - name: Check for drift
-        id: drift_check
-        run: |
-          python pipeline/drift_detection.py
-          echo "drift_exit=$?" >> $GITHUB_OUTPUT
-        continue-on-error: true
+      - name: Run drift detection
+        run: python pipeline/drift_detection.py
 
       - name: Retrain model if drift detected
-        if: steps.drift_check.outputs.drift_exit == '1'
-        run: |
-          echo "⚠ Drift detected — triggering retraining..."
-          python pipeline/train.py
+        run: python pipeline/retrain.py
 
-      - name: Skip retraining if no drift
-        if: steps.drift_check.outputs.drift_exit == '0'
-        run: echo "✓ No drift detected — model is stable, skipping retraining"
+      - name: Evaluate new model
+        run: python pipeline/evaluate.py
 
-      - name: Upload drift report
-        uses: actions/upload-artifact@v3
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4   # ✅ updated from v3
         with:
-          name: drift-report
-          path: data/processed/drift_report.json
-
-      - name: Upload model metrics
-        uses: actions/upload-artifact@v3
-        if: steps.drift_check.outputs.drift_exit == '1'
-        with:
-          name: model-metrics
-          path: data/processed/latest_metrics.json
+          name: model-artifacts
+          path: models/
+          retention-days: 30
